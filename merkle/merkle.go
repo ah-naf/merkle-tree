@@ -48,7 +48,7 @@ func build(data [][]byte) *Node {
 	return leaves[0]
 }
 
-func BuildMarkle(data [][]byte) string {
+func BuildMarkle(data [][]byte) []byte {
 	tree := build(data)
 
 	out, err := json.MarshalIndent(tree, "", " ")
@@ -57,6 +57,6 @@ func BuildMarkle(data [][]byte) string {
 		os.Exit(1)
 	}
 
-	return string(out)
+	return out
 
 }
