@@ -1,9 +1,18 @@
 package handler
 
 import (
+	"crypto/sha256"
 	"database/sql"
+	"encoding/hex"
+	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
+	"strconv"
 
+	"github.com/ah-naf/merkle-upload-service/internal/merkle"
 	"github.com/ah-naf/merkle-upload-service/internal/model"
 	"github.com/gin-gonic/gin"
 )
@@ -54,3 +63,76 @@ func (h *UploadHandler) InitUpload(c *gin.Context) {
 		Uploaded:    []int{},
 	})
 }
+
+// PUT /uploads/:root/chunks/:idx
+// Expects:
+//   - raw chunk bytes in body
+//   - header   X-Leaf-Hash: "<hex Li>"
+//   - header   X-Merkle-Proof: JSON of []ProofStep (from client)
+//
+// Verifies SHA256(chunk)==Li and merkle.VerifyProof(proof) before storing.
+func (h *UploadHandler) PutChunk(c *gin.Context) {
+	root := c.Param("root")
+	idx, err := strconv.Atoi(c.Param("idx"))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid chunk index"})
+		return
+	}
+
+	// read raw chunk
+	data, err := io.ReadAll(c.Request.Body)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not read body"})
+		return
+	}
+
+	// 1) verify the chunk’s own hash
+	leaf := sha256.Sum256(data)
+	leafHex := hex.EncodeToString(leaf[:])
+	if leafHex != c.GetHeader("X-Leaf-Hash") {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "leaf-hash mismatch"})
+		return
+	}
+
+	// 2) parse & verify the client’s Merkle proof
+	var proof merkle.MerkleProof
+	if err := json.Unmarshal([]byte(c.GetHeader("X-Merkle-Proof")), &proof); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid proof JSON"})
+		return
+	}
+	// ensure the proof’s root matches our session’s root
+	if proof.Root != root {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "proof root mismatch"})
+		return
+	}
+	if !merkle.VerifyProof(proof) {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "merkle proof failed"})
+		return
+	}
+
+	// 3) record in DB (idempotent)
+	if _, err := h.db.Exec(
+		`INSERT INTO upload_chunks(merkle_root,chunk_index,leaf_hash)
+         VALUES($1,$2,$3) ON CONFLICT DO NOTHING`,
+		root, idx, leafHex,
+	); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+
+	// 4) save chunk to local storage
+	dir := filepath.Join(h.storagePath, root)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not create storage dir"})
+		return
+	}
+	path := filepath.Join(dir, fmt.Sprintf("%d.chunk", idx))
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "could not write chunk"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"status": "chunk ok", "chunk_index": idx})
+}
+
+
