@@ -135,4 +135,81 @@ func (h *UploadHandler) PutChunk(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{"status": "chunk ok", "chunk_index": idx})
 }
 
+// GET /uploads/:root/status
+// Returns which indices have been stored so the client can retry only the rest.
+func (h *UploadHandler) Status(c *gin.Context) {
+	root := c.Param("root")
 
+	// fetch total_chunks
+	var total int
+	if err := h.db.QueryRow(
+		`SELECT total_chunks FROM uploads WHERE merkle_root=$1`,
+		root,
+	).Scan(&total); err != nil {
+		if err == sql.ErrNoRows {
+			c.JSON(http.StatusNotFound, gin.H{"error": "upload not found"})
+		} else {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		}
+		return
+	}
+
+	rows, err := h.db.Query(
+		`SELECT chunk_index FROM upload_chunks WHERE merkle_root=$1`,
+		root,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	defer rows.Close()
+
+	have := make([]bool, total)
+	for rows.Next() {
+		var i int
+		rows.Scan(&i)
+		if i >= 0 && i < total {
+			have[i] = true
+		}
+	}
+
+	uploaded, missing := []int{}, []int{}
+	for i := 0; i < total; i++ {
+		if have[i] {
+			uploaded = append(uploaded, i)
+		} else {
+			missing = append(missing, i)
+		}
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"uploaded": uploaded,
+		"missing":  missing,
+	})
+}
+
+// POST /uploads/:root/finalize
+// Marks the upload complete (we trust the per-chunk proofs).
+func (h *UploadHandler) Finalize(c *gin.Context) {
+	root := c.Param("root")
+
+	// ensure the session exists
+	res, err := h.db.Exec(
+		`UPDATE uploads SET completed_at=now() WHERE merkle_root=$1`,
+		root,
+	)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "upload not found"})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"status":      "completed",
+		"merkle_root": root,
+	})
+}
