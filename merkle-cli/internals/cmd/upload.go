@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
+	"sync"
 	"time"
 
 	"github.com/ah-naf/merkle-cli/internals/merkle"
@@ -104,35 +106,71 @@ var uploadCmd = &cobra.Command{
 				break // all done
 			}
 
-			// upload each missing chunk
+			missingChan := make(chan int, len(st.Missing))
+			errChan := make(chan error, len(st.Missing))
+
 			for _, idx := range st.Missing {
-				chunk := chunks[idx]
+				missingChan <- idx
+			}
+			close(missingChan)
 
-				// leaf hash
-				sum := sha256.Sum256(chunk)
-				leafHex := hex.EncodeToString(sum[:])
+			concurrency := 4
+			if s := os.Getenv("NUMBER_OF_WORKERS"); s != "" {
+				if n, err := strconv.Atoi(s); err == nil && n > 0 {
+					concurrency = n
+				} else {
+					fmt.Fprintf(os.Stderr, "WARNING: invalid NUMBER_OF_WORKERS=%q, using %d\n", s, concurrency)
+				}
+			}
 
-				// proof for this leaf
-				proof, ok := merkle.GenerateProof(&rootNode, leafHex)
-				if !ok {
-					return fmt.Errorf("failed to generate proof for chunk %d", idx)
-				}
-				proofJSON, _ := json.Marshal(proof)
+			var wg sync.WaitGroup
+			wg.Add(concurrency)
 
-				// PUT /uploads/:root/chunks/:idx
-				url := fmt.Sprintf("%s/uploads/%s/chunks/%d", serverURL, merkleRoot, idx)
-				req, _ := http.NewRequest("PUT", url, bytes.NewReader(chunk))
-				req.Header.Set("X-Leaf-Hash", leafHex)
-				req.Header.Set("X-Merkle-Proof", string(proofJSON))
-				r2, err := client.Do(req)
-				if err != nil {
-					return fmt.Errorf("upload chunk %d: %w", idx, err)
-				}
-				r2.Body.Close()
-				if r2.StatusCode != http.StatusOK {
-					return fmt.Errorf("chunk %d rejected: %s", idx, r2.Status)
-				}
-				fmt.Printf("✓ uploaded chunk %d/%d\n", idx+1, totalChunks)
+			for w := 0; w < concurrency; w++ {
+				go func() {
+					defer wg.Done()
+					for idx := range missingChan {
+						chunk := chunks[idx]
+
+						// compute leaf & proof (rootNode is read‑only)
+						sum := sha256.Sum256(chunk)
+						leafHex := hex.EncodeToString(sum[:])
+						proof, ok := merkle.GenerateProof(&rootNode, leafHex)
+						if !ok {
+							errChan <- fmt.Errorf("proof failed for chunk %d", idx)
+							return
+						}
+						proofJSON, _ := json.Marshal(proof)
+
+						// build request
+						url := fmt.Sprintf("%s/uploads/%s/chunks/%d", serverURL, merkleRoot, idx)
+						req, _ := http.NewRequest("PUT", url, bytes.NewReader(chunk))
+						req.Header.Set("X-Leaf-Hash", leafHex)
+						req.Header.Set("X-Merkle-Proof", string(proofJSON))
+
+						// execute
+						resp, err := client.Do(req)
+						if err != nil {
+							errChan <- fmt.Errorf("upload chunk %d: %w", idx, err)
+							return
+						}
+						resp.Body.Close()
+						if resp.StatusCode != http.StatusOK {
+							errChan <- fmt.Errorf("chunk %d rejected: %s", idx, resp.Status)
+							return
+						}
+
+						fmt.Printf("✓ uploaded chunk %d/%d\n", idx+1, totalChunks)
+					}
+				}()
+			}
+			go func() {
+				wg.Wait()
+				close(errChan)
+			}()
+
+			if err := <-errChan; err != nil {
+				return err
 			}
 		}
 
