@@ -38,7 +38,7 @@ func (h *UploadHandler) InitUpload(c *gin.Context) {
 	err := h.db.QueryRow("SELECT 1 FROM uploads WHERE merkle_root=$1", req.MerkleRoot).Scan(&exists)
 	if err != sql.ErrNoRows {
 		if err == nil {
-			c.JSON(http.StatusConflict, gin.H{"error": "upload already initialized"})
+			c.JSON(http.StatusCreated, gin.H{"message": "upload already initialized"})
 		} else {
 			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		}
