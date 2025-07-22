@@ -28,11 +28,10 @@ func main() {
 	})
 
 	h := handler.NewUploadHandler(db.DB, os.Getenv("STORAGE_PATH"))
-	r := gin.Default()
-	r.POST("/uploads/init", h.InitUpload)
-	r.PUT("/uploads/:root/chunks/:idx", h.PutChunk)
-	r.GET("/uploads/:root/status", h.Status)
-	r.POST("/uploads/:root/finalize", h.Finalize)
+	router.POST("/uploads/init", h.InitUpload)
+	router.PUT("/uploads/:root/chunks/:idx", h.PutChunk)
+	router.GET("/uploads/:root/status", h.Status)
+	router.POST("/uploads/:root/finalize", h.Finalize)
 
 	if err := router.Run(":8080"); err != nil {
 		log.Fatalf("failed to run server: %v", err)
