@@ -24,7 +24,7 @@ func build(data [][]byte) *Node {
 
 	for len(leaves) > 1 {
 		// step 2: if it constains odd data length, duplicate the last one
-		if len(data)%2 == 1 {
+		if len(leaves)%2 == 1 {
 			leaves = append(leaves, leaves[len(leaves)-1])
 		}
 
