@@ -18,4 +18,5 @@ func init() {
 	rootCmd.AddCommand(buildCmd)
 	rootCmd.AddCommand(verifyCmd)
 	rootCmd.AddCommand(downloadCmd)
+	rootCmd.AddCommand(validateCmd)
 }

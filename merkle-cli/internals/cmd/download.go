@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,21 +19,7 @@ var downloadCmd = &cobra.Command{
 	Use:   "download [merkle_root] [output_file]",
 	Short: "Verify and download & merge all chunks",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		// first, verify on server
-		verifyURL := fmt.Sprintf("%s/uploads/%s/verify", serverURL, root)
-		vr, err := http.Get(verifyURL)
-		if err != nil {
-			return err
-		}
-		if vr.StatusCode != http.StatusOK {
-			var detail map[string]interface{}
-			_ = json.NewDecoder(vr.Body).Decode(&detail)
-			return fmt.Errorf("verification failed: %v", detail)
-		}
-		vr.Body.Close()
-
-		// then download merged file
-		url := fmt.Sprintf("%s/uploads/%s/download", serverURL, root)
+		url := fmt.Sprintf("%s/download/%s", serverURL, root)
 		resp, err := http.Get(url)
 		if err != nil {
 			return err
