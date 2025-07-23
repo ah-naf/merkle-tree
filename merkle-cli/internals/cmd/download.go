@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"time"
 
+	"github.com/schollz/progressbar/v3"
 	"github.com/spf13/cobra"
 )
 
@@ -16,8 +19,10 @@ var (
 )
 
 var downloadCmd = &cobra.Command{
-	Use:   "download [merkle_root] [output_file]",
-	Short: "Verify and download & merge all chunks",
+	Use:           "download [merkle_root] [output_file]",
+	Short:         "Verify and download & merge all chunks",
+	SilenceUsage:  true,
+	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		url := fmt.Sprintf("%s/download/%s", serverURL, root)
 		resp, err := http.Get(url)
@@ -26,21 +31,31 @@ var downloadCmd = &cobra.Command{
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != 200 {
-			body, _ := io.ReadAll(resp.Body)
-			return fmt.Errorf("download failed: %s", string(body))
+			bodyBytes, _ := io.ReadAll(resp.Body)
+
+			var prettyJSON bytes.Buffer
+			if err := json.Indent(&prettyJSON, bodyBytes, "", "  "); err != nil {
+				return fmt.Errorf("download failed: %s", string(bodyBytes))
+			}
+			return fmt.Errorf("download failed:\n%s", prettyJSON.String())
 		}
 
-		f, err := os.Create(outPath)
+		f, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY, 0644)
 		if err != nil {
 			return err
 		}
 		defer f.Close()
-		_, err = io.Copy(f, resp.Body)
-		if err != nil {
+
+		bar := progressbar.DefaultBytes(
+			resp.ContentLength,
+			"downloading",
+		)
+
+		if _, err := io.Copy(io.MultiWriter(f, bar), resp.Body); err != nil {
 			return err
 		}
 
-		fmt.Println("✅ downloaded to", outPath)
+		fmt.Println("\n✅ Download complete!")
 		return nil
 	},
 }
