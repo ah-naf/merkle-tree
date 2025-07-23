@@ -15,7 +15,7 @@ import (
 func (h *UploadHandler) Download(c *gin.Context) {
 	root := c.Param("root")
 
-	verifyURL := fmt.Sprintf("%s/verfiy/%s", h.baseURL(), root)
+	verifyURL := fmt.Sprintf("%s/verify/%s", h.baseURL(), root)
 	resp, err := http.Get(verifyURL)
 	if err != nil || resp.StatusCode != http.StatusOK {
 		var errResp map[string]interface{}
