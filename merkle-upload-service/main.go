@@ -33,8 +33,8 @@ func main() {
 	router.GET("/uploads/:root/status", h.Status)
 	router.POST("/uploads/:root/finalize", h.Finalize)
 
-	router.GET("/uploads/:root/verify", h.Verify)
-	router.GET("/uploads/:root/download", h.Download)
+	router.GET("/verify/:root", h.Verify)
+	router.GET("/download/:root", h.Download)
 
 	if err := router.Run(":8080"); err != nil {
 		log.Fatalf("failed to run server: %v", err)
